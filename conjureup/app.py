@@ -43,7 +43,7 @@ def parse_options(argv):
                         spell, or a keyword matching multiple spells
                         ('openstack')""")
     parser.add_argument('-d', '--debug', action='store_true',
-                        dest='debug', default=True,
+                        dest='debug', default=False,
                         help='Enable debug logging.')
     parser.add_argument('--show-env', action='store_true',
                         dest='show_env',
@@ -207,7 +207,7 @@ def main():
     # Application Config
     app.config = {'metadata': None}
     app.argv = opts
-    app.log = setup_logging("conjure-up/{}".format(spell),
+    app.log = setup_logging(app,
                             os.path.join(opts.cache_dir, 'conjure-up.log'),
                             opts.debug)
 
@@ -347,7 +347,12 @@ def main():
         app.headless = True
         app.ui = None
         app.env['CONJURE_UP_HEADLESS'] = "1"
-        _start()
+        try:
+            _start()
+        except (SystemExit, KeyboardInterrupt):
+            utils.warning('Shutting down')
+        finally:
+            async.ShutdownEvent.set()
 
     else:
         if EventLoop.rows() < 43 or EventLoop.columns() < 132:
@@ -361,12 +366,17 @@ def main():
             if 'N' in acknowledge or 'n' in acknowledge:
                 sys.exit(1)
         app.ui = ConjureUI()
+
         EventLoop.build_loop(app.ui, STYLES,
                              unhandled_input=unhandled_input)
         EventLoop.set_alarm_in(0.05, _start)
-        EventLoop.run()
-        # explicitly close aysncio event loop to avoid hitting the following
-        # issue due to signal handlers added by asyncio.create_subprocess_exec
-        # being cleaned up during final garbage collection:
-        # https://github.com/python/asyncio/issues/396
-        asyncio.get_event_loop().close()
+        try:
+            EventLoop.run()
+        finally:
+            app.log.info('Shutting down')
+            async.ShutdownEvent.set()
+            # explicitly close aysncio event loop to avoid hitting the following
+            # issue due to signal handlers added by asyncio.create_subprocess_exec
+            # being cleaned up during final garbage collection:
+            # https://github.com/python/asyncio/issues/396
+            asyncio.get_event_loop().close()
